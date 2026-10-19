@@ -1,0 +1,27 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-327-feat-contracts-wire-timelocked-oracle-rotation",
+    "feat/issue-397-feat-api-validate-track-and-agent-filters-on",
+    "fix/issue-329-refactor-api-remove-the-dead-duplicate",
+    "fix/issue-364-chore-ci-run-locale-completeness-and-driver",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-327-feat-contracts-wire-timelocked-oracle-rotation": "main",
+    "feat/issue-397-feat-api-validate-track-and-agent-filters-on": "main",
+    "fix/issue-329-refactor-api-remove-the-dead-duplicate": "main",
+    "fix/issue-364-chore-ci-run-locale-completeness-and-driver": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-327-feat-contracts-wire-timelocked-oracle-rotation",
+    "feat/issue-397-feat-api-validate-track-and-agent-filters-on",
+    "fix/issue-329-refactor-api-remove-the-dead-duplicate",
+    "fix/issue-364-chore-ci-run-locale-completeness-and-driver",
+    "origin"
+  ]
+}
