@@ -8,6 +8,11 @@
  * Withheld and tombstoned events are excluded by the query, so an event that
  * tripped the safety pass never reaches a reader — while remaining in the table
  * as the audit trail.
+ *
+ * Responses are capped and cursor-paginated: the default page is 50 events
+ * (max 200), newest first. Pass `limit` to adjust the page size and the
+ * opaque `nextCursor` from the previous response as `before` to walk
+ * backwards through older events.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -15,10 +20,17 @@ import { getReasoningFeed } from "@/lib/db";
 import { isReasoningStage, type EvidenceRef } from "@/lib/reasoning/schema";
 import { REASONING_TRACKS } from "@/lib/research/categories";
 import { AGENT_ID_PATTERN } from "@/lib/agents/registry";
+import {
+  decodeReasoningCursor,
+  encodeReasoningCursor,
+  type ReasoningCursor,
+} from "@/lib/reasoning-cursor";
 
 export const dynamic = "force-dynamic";
 
 const MAX_FILTER_LENGTH = 128;
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
 
 interface FeedItem {
   eventId: string;
@@ -86,6 +98,17 @@ export function parseReasoningFilters(searchParams: URLSearchParams): ReasoningF
   };
 }
 
+export type { ReasoningCursor as ReasoningFeedCursor };
+export { decodeReasoningCursor as decodeReasoningFeedCursor };
+export { encodeReasoningCursor as encodeReasoningFeedCursor };
+
+function parseLimit(raw: string | null): number {
+  if (!raw) return DEFAULT_LIMIT;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) return DEFAULT_LIMIT;
+  return Math.min(n, MAX_LIMIT);
+}
+
 function parseEvidence(json: string): EvidenceRef[] {
   try {
     const parsed = JSON.parse(json);
@@ -112,15 +135,35 @@ export async function GET(
     return NextResponse.json({ error: "invalid claim id" }, { status: 400 });
   }
 
-  const parsed = parseReasoningFilters(req.nextUrl.searchParams);
+  const searchParams = req.nextUrl.searchParams;
+
+  const parsed = parseReasoningFilters(searchParams);
   if (!parsed.ok) {
     return invalidRequest(parsed.field);
   }
   const { track, agentId, stage } = parsed.filters;
 
+  const limit = parseLimit(searchParams.get("limit"));
+  const beforeRaw = searchParams.get("before");
+  const before = beforeRaw ? decodeReasoningCursor(beforeRaw) : null;
+  if (beforeRaw && !before) {
+    return NextResponse.json({ error: "invalid before cursor" }, { status: 400 });
+  }
+
   try {
-    const rows = await getReasoningFeed({ claimId, track, agentId, stage });
-    const items: FeedItem[] = rows.map((row) => ({
+    // Fetch one extra row to detect whether another page exists.
+    const rows = await getReasoningFeed({
+      claimId,
+      track,
+      agentId,
+      stage,
+      limit: limit + 1,
+      before: before ?? undefined,
+    });
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+
+    const items: FeedItem[] = pageRows.map((row) => ({
       eventId: row.event_id,
       agentId: row.agent_id,
       track: row.track,
@@ -145,8 +188,14 @@ export async function GET(
       createdAt: row.created_at,
     }));
 
+    const last = pageRows[pageRows.length - 1];
+    const nextCursor =
+      hasMore && last
+        ? encodeReasoningCursor({ createdAt: last.created_at, eventId: last.event_id })
+        : null;
+
     return NextResponse.json(
-      { claimId, count: items.length, items },
+      { claimId, count: items.length, items, nextCursor },
       {
         headers: {
           // The feed grows slowly and is polled by the detail page.
@@ -157,6 +206,9 @@ export async function GET(
   } catch (err) {
     // No Neon configured (or it is down) means no feed — not a broken page.
     const message = err instanceof Error ? err.message : "read failed";
-    return NextResponse.json({ claimId, count: 0, items: [], error: message }, { status: 503 });
+    return NextResponse.json(
+      { claimId, count: 0, items: [], nextCursor: null, error: message },
+      { status: 503 },
+    );
   }
 }
